@@ -8,8 +8,9 @@
 
 import { useState, useCallback, type ReactNode } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
 import {
   TraceQRLogo,
   HomeIcon,
@@ -103,15 +104,19 @@ export function CompanyLayout({
   
   // Get current path for active state
   const pathname = usePathname()
+  const router = useRouter()
 
   /**
    * Handles logout action
    * Emits logout event and redirects to login
    */
-  const handleLogout = useCallback((): void => {
+  const handleLogout = useCallback(async (): Promise<void> => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
     appEventEmitter.emit(AppEventType.USER_LOGOUT, undefined)
-    // Redirect handled by event listener
-  }, [])
+    router.replace("/admin/login")
+    router.refresh()
+  }, [router])
 
   /**
    * Toggles mobile menu visibility

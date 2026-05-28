@@ -6,7 +6,8 @@
 
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
   UsersIcon,
@@ -19,83 +20,8 @@ import {
   ArrowUpIcon,
 } from "@/components/icons"
 import { appEventEmitter, AppEventType } from "@/lib/events"
-import type { AdminStats, TraceabilityEvent } from "@/lib/types"
+import type { AdminDashboardData } from "@/lib/dashboard-data"
 
-// =====================================================
-// MOCK DATA (Replace with Supabase queries)
-// =====================================================
-
-const MOCK_ADMIN_STATS: AdminStats = {
-  activeUsers: 1247,
-  usersChange: 83,
-  scansToday: 342,
-  scansChange: 12,
-  registeredCompanies: 7,
-  companiesThisMonth: 1,
-  globalClosureRate: 81.4,
-  closureChange: 3,
-}
-
-const MOCK_RECENT_SCANS: Array<{
-  id: string
-  qrCode: string
-  company: string
-  collectionPoint: string
-  status: "valid" | "duplicate" | "invalid"
-  timestamp: Date
-}> = [
-  { id: "1", qrCode: "UVY001-PET500-550e...", company: "AguaYumbo", collectionPoint: "Bloque A", status: "valid", timestamp: new Date() },
-  { id: "2", qrCode: "UVY001-HDPE1L-44a...", company: "PlastiCo S.A.", collectionPoint: "Cafeteria", status: "valid", timestamp: new Date(Date.now() - 300000) },
-  { id: "3", qrCode: "UVY001-PET500-998f...", company: "AguaYumbo", collectionPoint: "Bloque C", status: "duplicate", timestamp: new Date(Date.now() - 600000) },
-  { id: "4", qrCode: "UVY003-PP200-7cd1...", company: "FrescoValle", collectionPoint: "Entrada ppal.", status: "valid", timestamp: new Date(Date.now() - 900000) },
-  { id: "5", qrCode: "INVALID-QR-xxx...", company: "—", collectionPoint: "—", status: "invalid", timestamp: new Date(Date.now() - 1200000) },
-]
-
-const MOCK_SYSTEM_ALERTS: Array<{
-  id: string
-  type: "warning" | "error" | "info"
-  message: string
-  timestamp: Date
-}> = [
-  { id: "1", type: "warning", message: "1 escaneo duplicado detectado - UVY001 - hace 14 min", timestamp: new Date() },
-  { id: "2", type: "error", message: "QR invalido rechazado - hash no coincide - hace 32 min", timestamp: new Date() },
-  { id: "3", type: "info", message: "Nueva empresa FrescoValle aprobada - hoy 09:12", timestamp: new Date() },
-]
-
-const MOCK_TOP_USERS: Array<{
-  rank: number
-  name: string
-  campus: string
-  scans: number
-  points: number
-  level: string
-}> = [
-  { rank: 1, name: "LM***04", campus: "Univalle Yumbo", scans: 142, points: 1420, level: "Embajador" },
-  { rank: 2, name: "JB***12", campus: "Univalle Yumbo", scans: 98, points: 980, level: "Lider" },
-  { rank: 3, name: "JC***78", campus: "Univalle Yumbo", scans: 76, points: 760, level: "Lider" },
-  { rank: 4, name: "AM***33", campus: "Univalle Yumbo", scans: 54, points: 540, level: "Activo" },
-]
-
-const MOCK_COMPANIES: Array<{
-  name: string
-  prefix: string
-  nit: string
-  qrGenerated: number
-  status: "active" | "pending"
-}> = [
-  { name: "AguaYumbo S.A.S.", prefix: "UVY001", nit: "900123456-1", qrGenerated: 10000, status: "active" },
-  { name: "PlastiCo S.A.", prefix: "UVY002", nit: "800456789-2", qrGenerated: 25000, status: "active" },
-  { name: "FrescoValle", prefix: "UVY003", nit: "830912345-7", qrGenerated: 5000, status: "active" },
-  { name: "EcoEnvases Ltda.", prefix: "—", nit: "900887654-3", qrGenerated: 0, status: "pending" },
-]
-
-// =====================================================
-// HELPER COMPONENTS
-// =====================================================
-
-/**
- * StatCard - Displays a single admin statistic
- */
 interface StatCardProps {
   title: string
   value: string | number
@@ -127,9 +53,6 @@ function StatCard({ title, value, change, icon, bgColor, textColor }: StatCardPr
   )
 }
 
-/**
- * StatusBadge - Displays scan status with appropriate color
- */
 function StatusBadge({ status }: { status: "valid" | "duplicate" | "invalid" }): JSX.Element {
   const config = {
     valid: { bg: "bg-green-100", text: "text-green-700", icon: <CheckCircleIcon className="size-3" />, label: "Valido" },
@@ -145,9 +68,6 @@ function StatusBadge({ status }: { status: "valid" | "duplicate" | "invalid" }):
   )
 }
 
-/**
- * LevelBadge - Displays user level with color
- */
 function LevelBadge({ level }: { level: string }): JSX.Element {
   const colors: Record<string, string> = {
     Embajador: "bg-purple-100 text-purple-700",
@@ -162,61 +82,27 @@ function LevelBadge({ level }: { level: string }): JSX.Element {
   )
 }
 
-// =====================================================
-// MAIN COMPONENT
-// =====================================================
+export function AdminDashboard({ data }: { data: AdminDashboardData }): JSX.Element {
+  const router = useRouter()
+  const { stats, recentScans, alerts, topUsers, companies } = data
 
-/**
- * AdminDashboard - Main dashboard for admin panel
- * Shows real-time stats, recent scans, alerts, users, and companies
- * @returns {JSX.Element} Admin dashboard
- */
-export function AdminDashboard(): JSX.Element {
-  // State
-  const [stats, setStats] = useState<AdminStats>(MOCK_ADMIN_STATS)
-  const [recentScans] = useState(MOCK_RECENT_SCANS)
-  const [alerts] = useState(MOCK_SYSTEM_ALERTS)
-  const [topUsers] = useState(MOCK_TOP_USERS)
-  const [companies] = useState(MOCK_COMPANIES)
-  const [isLoading, setIsLoading] = useState<boolean>(false)
-
-  /**
-   * Fetches dashboard data
-   */
-  const fetchData = useCallback(async (): Promise<void> => {
-    setIsLoading(true)
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      setStats(MOCK_ADMIN_STATS)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
-
-  // Listen for scan events
   useEffect(() => {
     const handleScan = (): void => {
-      fetchData()
+      router.refresh()
     }
     appEventEmitter.on(AppEventType.QR_SCANNED, handleScan)
     return () => {
       appEventEmitter.off(AppEventType.QR_SCANNED, handleScan)
     }
-  }, [fetchData])
+  }, [router])
 
   return (
     <div className="space-y-6">
-      {/* ==================== HEADER ==================== */}
       <div>
         <h1 className="text-2xl font-bold text-foreground">Panel de control</h1>
         <p className="text-muted-foreground">Monitorea y gestiona el impacto global</p>
       </div>
 
-      {/* ==================== STAT CARDS ==================== */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Usuarios Activos"
@@ -245,17 +131,15 @@ export function AdminDashboard(): JSX.Element {
         <StatCard
           title="Tasa cierre global"
           value={`${stats.globalClosureRate}%`}
-          change={`+${stats.closureChange}pp vs. abril`}
+          change={`+${stats.closureChange}pp`}
           icon={<ChartIcon className="size-6 text-green-600" />}
           bgColor="bg-green-100"
           textColor="text-green-700"
         />
       </div>
 
-      {/* ==================== MAIN GRID ==================== */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Recent Scans Table */}
-        <div className="lg:col-span-2 rounded-xl border border-border bg-card">
+        <div className="rounded-xl border border-border bg-card lg:col-span-2">
           <div className="flex items-center justify-between border-b border-border px-6 py-4">
             <h2 className="font-semibold text-foreground">Escaneos recientes</h2>
             <button className="text-sm text-primary hover:underline">Ver todos</button>
@@ -271,7 +155,7 @@ export function AdminDashboard(): JSX.Element {
                 </tr>
               </thead>
               <tbody>
-                {recentScans.map((scan) => (
+                {recentScans.length > 0 ? recentScans.map((scan) => (
                   <tr key={scan.id} className="border-b border-border last:border-0">
                     <td className="px-4 py-3 font-mono text-xs">{scan.qrCode}</td>
                     <td className="px-4 py-3">{scan.company}</td>
@@ -280,13 +164,18 @@ export function AdminDashboard(): JSX.Element {
                       <StatusBadge status={scan.status} />
                     </td>
                   </tr>
-                ))}
+                )) : (
+                  <tr>
+                    <td className="px-4 py-6 text-center text-muted-foreground" colSpan={4}>
+                      Sin escaneos registrados
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* System Alerts */}
         <div className="rounded-xl border border-border bg-card">
           <div className="border-b border-border px-6 py-4">
             <h2 className="font-semibold text-foreground">Alertas del sistema</h2>
@@ -298,7 +187,7 @@ export function AdminDashboard(): JSX.Element {
                   "mt-0.5 size-2 rounded-full",
                   alert.type === "warning" && "bg-amber-500",
                   alert.type === "error" && "bg-red-500",
-                  alert.type === "info" && "bg-green-500"
+                  alert.type === "info" && "bg-green-500",
                 )} />
                 <p className="text-sm text-foreground">{alert.message}</p>
               </div>
@@ -318,12 +207,10 @@ export function AdminDashboard(): JSX.Element {
         </div>
       </div>
 
-      {/* ==================== BOTTOM GRID ==================== */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Top Users */}
         <div className="rounded-xl border border-border bg-card">
           <div className="flex items-center justify-between border-b border-border px-6 py-4">
-            <h2 className="font-semibold text-foreground">Top usuarios - mayo</h2>
+            <h2 className="font-semibold text-foreground">Top usuarios</h2>
             <button className="text-sm text-primary hover:underline">Ver ranking completo</button>
           </div>
           <table className="w-full text-sm">
@@ -337,7 +224,7 @@ export function AdminDashboard(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {topUsers.map((user) => (
+              {topUsers.length > 0 ? topUsers.map((user) => (
                 <tr key={user.rank} className="border-b border-border last:border-0">
                   <td className="px-4 py-3 font-medium">{user.rank}</td>
                   <td className="px-4 py-3">
@@ -352,12 +239,17 @@ export function AdminDashboard(): JSX.Element {
                     <LevelBadge level={user.level} />
                   </td>
                 </tr>
-              ))}
+              )) : (
+                <tr>
+                  <td className="px-4 py-6 text-center text-muted-foreground" colSpan={5}>
+                    Sin usuarios para ranking
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* Companies */}
         <div className="rounded-xl border border-border bg-card">
           <div className="flex items-center justify-between border-b border-border px-6 py-4">
             <h2 className="font-semibold text-foreground">Empresas registradas</h2>
@@ -375,8 +267,8 @@ export function AdminDashboard(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {companies.map((company, idx) => (
-                <tr key={idx} className="border-b border-border last:border-0">
+              {companies.length > 0 ? companies.map((company) => (
+                <tr key={`${company.prefix}-${company.nit}`} className="border-b border-border last:border-0">
                   <td className="px-4 py-3">
                     <div>
                       <p className="font-medium">{company.name}</p>
@@ -388,13 +280,19 @@ export function AdminDashboard(): JSX.Element {
                   <td className="px-4 py-3">
                     <span className={cn(
                       "rounded-full px-2 py-0.5 text-xs font-medium",
-                      company.status === "active" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                      company.status === "active" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700",
                     )}>
                       {company.status === "active" ? "Activo" : "Pendiente"}
                     </span>
                   </td>
                 </tr>
-              ))}
+              )) : (
+                <tr>
+                  <td className="px-4 py-6 text-center text-muted-foreground" colSpan={4}>
+                    Sin empresas registradas
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

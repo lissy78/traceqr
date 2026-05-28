@@ -6,7 +6,8 @@
 
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
   PackageIcon,
@@ -18,71 +19,15 @@ import {
   ArrowDownIcon,
 } from "@/components/icons"
 import { appEventEmitter, AppEventType } from "@/lib/events"
-import type { CompanyStats, PlasticType, TraceabilityEvent } from "@/lib/types"
+import type { CompanyDashboardData } from "@/lib/dashboard-data"
+import type { PlasticType, TraceabilityEvent } from "@/lib/types"
 
-// =====================================================
-// MOCK DATA (Replace with Supabase queries)
-// =====================================================
-
-const MOCK_COMPANY_STATS: CompanyStats = {
-  totalScans: 8420,
-  totalKgTracked: 421,
-  closureRate: 84.2,
-  qrGenerated: 10000,
-  scansChange: 12,
-  kgChange: 8,
-  closureChange: 3,
-}
-
-const MOCK_PLASTIC_BREAKDOWN: Array<{ type: PlasticType; count: number; percentage: number }> = [
-  { type: "PET", count: 31, percentage: 72 },
-  { type: "HDPE", count: 10, percentage: 23 },
-  { type: "PP", count: 2, percentage: 5 },
-]
-
-const MOCK_TRACEABILITY: TraceabilityEvent[] = [
-  {
-    id: "1",
-    qrCode: "UVY001-PET500",
-    event: "scanned",
-    location: "Bloque A - Planta de acopio confirmada",
-    timestamp: new Date().toISOString(),
-  },
-  {
-    id: "2",
-    qrCode: "UVY001-HDPE1L",
-    event: "collected",
-    location: "Cafeteria central",
-    timestamp: new Date(Date.now() - 86400000).toISOString(),
-  },
-  {
-    id: "3",
-    qrCode: "UVY002-PET1L",
-    event: "recycled",
-    location: "Bloque C - Zona industrial",
-    timestamp: new Date(Date.now() - 172800000).toISOString(),
-  },
-]
-
-// =====================================================
-// HELPER COMPONENTS
-// =====================================================
-
-/**
- * KPICard - Displays a single KPI metric with change indicator
- */
 interface KPICardProps {
-  /** Title of the KPI */
   title: string
-  /** Main value to display */
   value: string | number
-  /** Unit suffix (e.g., "kg", "%") */
   unit?: string
-  /** Percentage change from previous period */
   change?: number
-  /** Icon to display */
   icon: React.ReactNode
-  /** Background color class */
   bgColor?: string
 }
 
@@ -94,8 +39,8 @@ function KPICard({
   icon,
   bgColor = "bg-primary/10",
 }: KPICardProps): JSX.Element {
-  const isPositive = change && change > 0
-  const isNegative = change && change < 0
+  const isPositive = change !== undefined && change > 0
+  const isNegative = change !== undefined && change < 0
 
   return (
     <div className="rounded-xl border border-border bg-card p-5">
@@ -112,7 +57,7 @@ function KPICard({
                 "mt-2 flex items-center gap-1 text-sm",
                 isPositive && "text-green-600",
                 isNegative && "text-red-600",
-                !isPositive && !isNegative && "text-muted-foreground"
+                !isPositive && !isNegative && "text-muted-foreground",
               )}
             >
               {isPositive && <ArrowUpIcon className="size-4" />}
@@ -130,9 +75,6 @@ function KPICard({
   )
 }
 
-/**
- * PlasticBreakdownBar - Visual bar showing plastic type distribution
- */
 interface PlasticBreakdownBarProps {
   type: PlasticType
   count: number
@@ -140,7 +82,6 @@ interface PlasticBreakdownBarProps {
 }
 
 function PlasticBreakdownBar({ type, count, percentage }: PlasticBreakdownBarProps): JSX.Element {
-  // Color mapping for plastic types
   const colorMap: Record<PlasticType, string> = {
     PET: "bg-primary",
     HDPE: "bg-chart-2",
@@ -166,19 +107,12 @@ function PlasticBreakdownBar({ type, count, percentage }: PlasticBreakdownBarPro
   )
 }
 
-/**
- * TraceabilityItem - Single item in traceability feed
- */
-interface TraceabilityItemProps {
-  event: TraceabilityEvent
-}
-
-function TraceabilityItem({ event }: TraceabilityItemProps): JSX.Element {
-  // Status color and label mapping
+function TraceabilityItem({ event }: { event: TraceabilityEvent }): JSX.Element {
   const statusConfig: Record<string, { color: string; label: string }> = {
     scanned: { color: "bg-blue-500", label: "escaneado" },
     collected: { color: "bg-yellow-500", label: "acopiado" },
     recycled: { color: "bg-green-500", label: "reciclado" },
+    invalid: { color: "bg-red-500", label: "rechazado" },
   }
 
   const config = statusConfig[event.event] || { color: "bg-muted", label: event.event }
@@ -198,9 +132,6 @@ function TraceabilityItem({ event }: TraceabilityItemProps): JSX.Element {
   )
 }
 
-/**
- * Formats a date as relative time (e.g., "Hoy", "Ayer", "20 may")
- */
 function getTimeAgo(date: Date): string {
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
@@ -211,60 +142,33 @@ function getTimeAgo(date: Date): string {
   return date.toLocaleDateString("es-CO", { day: "numeric", month: "short" })
 }
 
-// =====================================================
-// MAIN COMPONENT
-// =====================================================
+function currentPeriod(): string {
+  const now = new Date()
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  const format = (date: Date) => date.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit" })
+  return `${format(firstDay)} - ${format(lastDay)}/${now.getFullYear()}`
+}
 
-/**
- * CompanyDashboard - Main dashboard view for company portal
- * Displays KPIs, plastic breakdown, traceability feed, and REP report
- * @returns {JSX.Element} Company dashboard
- */
-export function CompanyDashboard(): JSX.Element {
-  // State for dashboard data
-  const [stats, setStats] = useState<CompanyStats>(MOCK_COMPANY_STATS)
-  const [plasticBreakdown] = useState(MOCK_PLASTIC_BREAKDOWN)
-  const [traceability] = useState(MOCK_TRACEABILITY)
-  const [isLoading, setIsLoading] = useState<boolean>(false)
+export function CompanyDashboard({ data }: { data: CompanyDashboardData }): JSX.Element {
+  const router = useRouter()
+  const { stats, plasticBreakdown, traceability } = data
+  const co2Reduced = Number((stats.totalKgTracked * 0.75).toFixed(1))
+  const waterSaved = Math.round(stats.totalKgTracked * 40)
 
-  /**
-   * Fetches dashboard data from Supabase
-   * TODO: Replace with actual Supabase query
-   */
-  const fetchDashboardData = useCallback(async (): Promise<void> => {
-    setIsLoading(true)
-    try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 500))
-      // Data would come from Supabase here
-      setStats(MOCK_COMPANY_STATS)
-    } catch (error) {
-      console.error("Error fetching dashboard data:", error)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
-
-  // Fetch data on mount
-  useEffect(() => {
-    fetchDashboardData()
-  }, [fetchDashboardData])
-
-  // Listen for scan events to refresh data
   useEffect(() => {
     const handleScan = (): void => {
-      fetchDashboardData()
+      router.refresh()
     }
 
     appEventEmitter.on(AppEventType.QR_SCANNED, handleScan)
     return () => {
       appEventEmitter.off(AppEventType.QR_SCANNED, handleScan)
     }
-  }, [fetchDashboardData])
+  }, [router])
 
   return (
     <div className="space-y-6">
-      {/* ==================== HEADER ==================== */}
       <div>
         <h1 className="text-2xl font-bold text-foreground">Panel de Control</h1>
         <p className="text-muted-foreground">
@@ -272,7 +176,6 @@ export function CompanyDashboard(): JSX.Element {
         </p>
       </div>
 
-      {/* ==================== KPI CARDS ==================== */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KPICard
           title="Escaneos totales"
@@ -305,19 +208,18 @@ export function CompanyDashboard(): JSX.Element {
         />
       </div>
 
-      {/* ==================== MIDDLE SECTION ==================== */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Plastic Type Breakdown */}
         <div className="rounded-xl border border-border bg-card p-6">
           <h2 className="mb-4 text-lg font-semibold text-foreground">Por tipo de plastico</h2>
           <div className="space-y-4">
-            {plasticBreakdown.map((item) => (
+            {plasticBreakdown.length > 0 ? plasticBreakdown.map((item) => (
               <PlasticBreakdownBar key={item.type} {...item} />
-            ))}
+            )) : (
+              <p className="text-sm text-muted-foreground">Aun no hay escaneos para graficar.</p>
+            )}
           </div>
         </div>
 
-        {/* REP Monthly Report */}
         <div className="rounded-xl border border-border bg-card p-6">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-foreground">
@@ -327,7 +229,7 @@ export function CompanyDashboard(): JSX.Element {
           <div className="space-y-3 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Periodo</span>
-              <span className="font-medium">01/05 - 31/05/2026</span>
+              <span className="font-medium">{currentPeriod()}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Escaneos</span>
@@ -335,7 +237,7 @@ export function CompanyDashboard(): JSX.Element {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Kg estimados</span>
-              <span className="font-medium">{stats.totalKgTracked}.00 kg</span>
+              <span className="font-medium">{stats.totalKgTracked.toLocaleString()} kg</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Tasa de cierre</span>
@@ -349,7 +251,6 @@ export function CompanyDashboard(): JSX.Element {
         </div>
       </div>
 
-      {/* ==================== TRACEABILITY FEED ==================== */}
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-foreground">Trazabilidad reciente</h2>
@@ -358,13 +259,14 @@ export function CompanyDashboard(): JSX.Element {
           </button>
         </div>
         <div className="space-y-3">
-          {traceability.map((event) => (
+          {traceability.length > 0 ? traceability.map((event) => (
             <TraceabilityItem key={event.id} event={event} />
-          ))}
+          )) : (
+            <p className="text-sm text-muted-foreground">Aun no hay eventos de trazabilidad.</p>
+          )}
         </div>
       </div>
 
-      {/* ==================== ENVIRONMENTAL IMPACT ==================== */}
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="rounded-xl border border-border bg-gradient-to-br from-green-50 to-green-100 p-6 dark:from-green-950/20 dark:to-green-900/20">
           <div className="flex items-center gap-4">
@@ -372,7 +274,7 @@ export function CompanyDashboard(): JSX.Element {
               <LeafIcon className="size-8 text-green-600" />
             </div>
             <div>
-              <p className="text-3xl font-bold text-green-700 dark:text-green-400">315 kg</p>
+              <p className="text-3xl font-bold text-green-700 dark:text-green-400">{co2Reduced} kg</p>
               <p className="text-sm text-green-600 dark:text-green-500">
                 CO<sub>2</sub> Reducido
               </p>
@@ -385,7 +287,7 @@ export function CompanyDashboard(): JSX.Element {
               <WaterIcon className="size-8 text-blue-600" />
             </div>
             <div>
-              <p className="text-3xl font-bold text-blue-700 dark:text-blue-400">17,200 L</p>
+              <p className="text-3xl font-bold text-blue-700 dark:text-blue-400">{waterSaved.toLocaleString()} L</p>
               <p className="text-sm text-blue-600 dark:text-blue-500">Agua Ahorrada</p>
             </div>
           </div>

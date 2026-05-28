@@ -8,8 +8,10 @@
 
 import { useState, useCallback, type ReactNode } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
+import { appEventEmitter, AppEventType } from "@/lib/events"
 import {
   TraceQRLogo,
   HomeIcon,
@@ -110,6 +112,15 @@ export function AdminLayout({ children }: AdminLayoutProps): JSX.Element {
   
   // Get current path for active state
   const pathname = usePathname()
+  const router = useRouter()
+
+  const handleLogout = useCallback(async (): Promise<void> => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    appEventEmitter.emit(AppEventType.USER_LOGOUT, undefined)
+    router.replace("/admin/login")
+    router.refresh()
+  }, [router])
 
   /**
    * Toggles mobile menu visibility
@@ -163,7 +174,10 @@ export function AdminLayout({ children }: AdminLayoutProps): JSX.Element {
               <p className="text-xs text-slate-400">admin@traceqr.co</p>
             </div>
           </div>
-          <button className="flex w-full items-center gap-3 rounded-lg px-4 py-2 text-sm text-slate-400 transition-colors hover:bg-slate-800 hover:text-white">
+          <button
+            onClick={handleLogout}
+            className="flex w-full items-center gap-3 rounded-lg px-4 py-2 text-sm text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+          >
             <LogoutIcon className="size-5" />
             <span>Cerrar sesion</span>
           </button>
